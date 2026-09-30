@@ -263,6 +263,7 @@ export async function admitNativeAcpWorker(
   }
 
   const admitted: ActiveWorkflowWorker = {
+    process: launched.child,
     workerId: launched.worker.worker_id,
     workspace,
     evidence: {

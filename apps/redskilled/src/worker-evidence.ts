@@ -30,7 +30,7 @@
  * authority; an id absent from it is only then judged by age. A directory whose
  * name is not a Worker id at all is RETAINED and reported, never guessed at.
  */
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { encodeHostWorkerId, isHostWorkerId } from "./worker-launch.js";
@@ -138,7 +138,7 @@ export async function retainWorkerEvidence(
   await mkdir(evidenceDir, { recursive: true, mode: WORKER_EVIDENCE_MODE });
 
   const work = input.workspace == null ? "absent" : await retainWorkerGit(input.workspace, evidenceDir);
-  const gateOutput = input.workspace == null ? "absent" : await capture(join(input.workspace.workspacePath, "gate-output.toonl"), join(evidenceDir, "gate-output.toonl"));
+  const gateOutput = input.workspace == null ? "absent" : await captureGateOutput(join(input.workspace.workspacePath, "gate-output.toonl"), join(evidenceDir, "gate-output.toonl"));
 
   const log = await capture(input.logPath, join(evidenceDir, WORKER_EVIDENCE_LOG_FILE));
   const artifact = input.verdict.sessionArtifact;
@@ -273,7 +273,14 @@ export async function pruneWorkerEvidence(
   };
 }
 
-/** Copy one source into the lane, reporting rather than throwing. */
+/** A missing gate artifact is legal; losing an existing one must forbid clone deletion. */
+async function captureGateOutput(source: string, target: string): Promise<WorkerEvidenceCapture> {
+  const present=await lstat(source).catch((error: NodeJS.ErrnoException)=>{if(error.code==="ENOENT") return undefined;throw error;});
+  if(present==null) return "absent";
+  await copyFile(source,target);return "copied";
+}
+
+/** Copy one narrative source into the lane, reporting rather than throwing. */
 async function capture(source: string | undefined, target: string): Promise<WorkerEvidenceCapture> {
   if (source == null || source.trim() === "") return "absent";
   try {

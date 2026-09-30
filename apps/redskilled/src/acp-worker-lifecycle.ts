@@ -1,4 +1,5 @@
 import type { Socket } from "node:net";
+import type { ChildProcess } from "node:child_process";
 import {
   methods,
   type AgentConnection,
@@ -16,8 +17,10 @@ import {
   type WorkerEvidencePlan,
 } from "./worker-evidence.js";
 import { releaseWorkerWorkspace, type MaterializedWorkerWorkspace } from "./worker-workspace.js";
+import { awaitWorkerEvidenceBarrier } from "./worker-evidence-barrier.js";
 
 export interface ActiveWorkflowWorker {
+  readonly process?: ChildProcess;
   readonly workerId: string;
   readonly downstreamSessionId: string;
   readonly connection: ClientConnection;
@@ -126,7 +129,7 @@ export function cleanupWorkflowWorker(
   // be inside the directory about to be deleted.
   const retained = worker.evidence == null
     ? (worker.workspace == null ? Promise.resolve() : Promise.reject(new Error("Worker has no evidence plan; preserving its workspace")))
-    : retainWorkerEvidence(evidenceFor(worker, worker.evidence, outcome)).then(() => undefined);
+    : awaitWorkerEvidenceBarrier(worker.process).then(() => retainWorkerEvidence(evidenceFor(worker, worker.evidence!, outcome))).then(() => undefined);
   void retained
     .then(async () => {
       // The workspace goes with the Worker. It is expensive and regenerable, and
