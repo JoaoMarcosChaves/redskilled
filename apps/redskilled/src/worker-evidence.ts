@@ -4,8 +4,8 @@
  * ADR 0149 §2 splits what a Worker produces by COST, not by tidiness. The
  * workspace is expensive and regenerable, so it lives in OS temporary storage
  * and the daemon deletes it the moment the Worker dies (`worker-workspace.ts`).
- * What this module keeps is the other half: the Worker's log, the runner's
- * session artifact and the verdict — a few kilobytes that no rerun reproduces,
+ * What this module keeps is the other half: unique Git commits and edits, gate
+ * output, the Worker's log, the runner's session artifact and the verdict,
  * because they describe a run that already happened. They go to
  * `~/.red/tmp/workers/<id>/`, which is what a human reads after a reboot has
  * taken the workspace with it.
@@ -34,6 +34,8 @@ import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { encodeHostWorkerId, isHostWorkerId } from "./worker-launch.js";
+import { retainWorkerGit } from "./worker-git-evidence.js";
+import type { MaterializedWorkerWorkspace } from "./worker-workspace.js";
 
 /** The segments below the operator's home. `~/.red/tmp/workers` (ADR 0149 §2). */
 export const WORKER_EVIDENCE_SEGMENTS = [".red", "tmp", "workers"] as const;
@@ -102,6 +104,7 @@ export interface RetainWorkerEvidenceInput {
   readonly verdict: WorkerEvidenceVerdict;
   /** The Worker's narrative log, wherever the daemon told it to write one. */
   readonly logPath?: string;
+  readonly workspace?: MaterializedWorkerWorkspace;
 }
 
 /** Whether one artifact reached the lane, and why it did not when it did not. */
@@ -123,15 +126,19 @@ export interface RetainedWorkerEvidence {
  * copies also means the verdict can report what the copies actually did, so a
  * human reading the lane never has to infer a missing file's meaning.
  *
- * Nothing here throws for a source that is not there: a Worker that died before
+ * Log/session sources may be absent: a Worker that died before
  * it logged a line is the ordinary early-death case, not an error, and losing
- * the verdict too would delete the only record of it.
+ * the verdict too would delete the only record of it. Work capture failures
+ * throw: the cleanup must preserve the private clone instead of losing work.
  */
 export async function retainWorkerEvidence(
   input: RetainWorkerEvidenceInput,
 ): Promise<RetainedWorkerEvidence> {
   const evidenceDir = workerEvidenceDir(input.root, input.verdict.workerId);
   await mkdir(evidenceDir, { recursive: true, mode: WORKER_EVIDENCE_MODE });
+
+  const work = input.workspace == null ? "absent" : await retainWorkerGit(input.workspace, evidenceDir);
+  const gateOutput = input.workspace == null ? "absent" : await capture(join(input.workspace.workspacePath, "gate-output.toonl"), join(evidenceDir, "gate-output.toonl"));
 
   const log = await capture(input.logPath, join(evidenceDir, WORKER_EVIDENCE_LOG_FILE));
   const artifact = input.verdict.sessionArtifact;
@@ -151,6 +158,8 @@ export async function retainWorkerEvidence(
     ...(input.verdict.publicSessionId == null ? {} : { public_session_id: input.verdict.publicSessionId }),
     ...(input.verdict.workspacePath == null ? {} : { released_workspace_path: input.verdict.workspacePath }),
     log,
+    work,
+    gate_output: gateOutput,
     session_artifact: sessionArtifact,
     ...(artifact == null ? {} : {
       session_artifact_report: {

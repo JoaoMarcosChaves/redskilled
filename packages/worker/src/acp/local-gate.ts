@@ -31,6 +31,7 @@ import { CASTLE_VALIDATION_SCHEMA, KILLED_EXIT_CODE } from "../engine/gate-const
 import type { GateStageOutcome } from "../engine/gate-stage-order.js";
 import type { WorkspaceGraph, WorkspacePackage } from "../engine/validation-cone.js";
 import type { TicketGateRun } from "./ticket-loop.js";
+import { gateFailureSummary, retainGateOutput } from "./gate-output.js";
 
 /** How long one backpressure command may run before the gate gives up on it. */
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
@@ -51,6 +52,7 @@ export interface WorkerLocalGateOptions {
    * them the branch's fault.
    */
   readonly validationCommands?: readonly string[];
+  readonly outputPath?: string;
   /** Test seam over the package suite. Production runs real `pnpm`. */
   readonly feedbackExec?: (args: string[]) => Promise<ExecResult>;
   /** Test seam over the operator's commands. Production runs a real shell. */
@@ -94,9 +96,16 @@ export async function runWorkerLocalGate(
     // The Worker passes no findings, so the sink is never consulted; `parked`
     // is the honest answer for the day one arrives before a reviewer does.
     sink: { intentFinding: async () => "parked" },
-    feedbackExec: options.feedbackExec ?? ((args) => runProgram(args[0]!, args.slice(1), options.worktree)),
-    backpressureExec: options.backpressureExec
-      ?? (({ command, cwd, timeoutMs }) => runShell(command, cwd, timeoutMs)),
+    feedbackExec: async (args) => {
+      const run = await (options.feedbackExec ?? ((argv) => runProgram(argv[0]!, argv.slice(1), options.worktree)))(args);
+      retainGateOutput(options.outputPath, args.join(" "), run);
+      return run;
+    },
+    backpressureExec: async (input) => {
+      const run = await (options.backpressureExec ?? (({command,cwd,timeoutMs}) => runShell(command,cwd,timeoutMs)))(input);
+      retainGateOutput(options.outputPath, input.command, run);
+      return run;
+    },
     applyMechanical: async () => undefined,
     now: options.now ?? Date.now,
     backpressureTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
@@ -135,9 +144,10 @@ async function runDeclaredGate(
   for (const command of commands) {
     const startedAt = now();
     const run = await exec({ command, cwd: options.worktree, timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+    retainGateOutput(options.outputPath, command, run);
     const passed = run.code === 0;
     checks.push(declaredCheck(`declared:${command}`, command, run.code, now() - startedAt,
-      passed ? undefined : tail(run.stderr || run.stdout, 400)));
+      passed ? undefined : gateFailureSummary(run)));
     if (!passed) break;
   }
   const backpressureCommands = options.backpressureCommands ?? [];
@@ -146,9 +156,10 @@ async function runDeclaredGate(
     for (const command of backpressureCommands) {
       const startedAt = now();
       const run = await exec({ command, cwd: options.worktree, timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS });
+      retainGateOutput(options.outputPath, command, run);
       const passed = run.code === 0;
       checks.push(declaredCheck(`backpressure:${command}`, command, run.code, now() - startedAt,
-        passed ? undefined : tail(run.stderr || run.stdout, 400)));
+        passed ? undefined : gateFailureSummary(run)));
       if (!passed) break;
     }
   }
@@ -190,12 +201,6 @@ function declaredCheck(
       ...(status === "passed" ? {} : { summary: failureSummary || "exited non-zero" }),
     },
   };
-}
-
-/** The last `max` characters — the failing part of a long build log. */
-function tail(text: string, max: number): string {
-  const trimmed = text.trim();
-  return trimmed.length <= max ? trimmed : trimmed.slice(trimmed.length - max);
 }
 
 function stageOutcome(

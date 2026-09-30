@@ -8,6 +8,7 @@
  * cancellation it honours — is body, and lives here (ADR 0148).
  */
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
 import {
   agent,
   methods,
@@ -175,6 +176,7 @@ export async function runNativeAcpWorker(socketPath: string, childEndpoint: AcpE
         try {
           return await runWorkerLocalGate({
             worktree: held.request.cwd,
+            outputPath: join(dirname(held.request.cwd), "gate-output.toonl"),
             base: ticket.base,
             ...(ticket.backpressure_commands == null
               ? {}

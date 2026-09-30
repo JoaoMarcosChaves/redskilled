@@ -9,6 +9,7 @@ import {
 import type { AcpTargetedDispatchIntent } from "./acp-dispatch-intent.js";
 import { removeAcpEndpoint } from "@reddb-io/protocol-acp";
 import { redskilledMetrics } from "./telemetry-metrics.js";
+import { redactDiagnosticLine } from "@reddb-io/shared/diagnostic-log.js";
 import {
   pruneWorkerEvidence,
   retainWorkerEvidence,
@@ -124,10 +125,9 @@ export function cleanupWorkflowWorker(
   // Evidence is retained BEFORE the workspace goes, because a Worker's log may
   // be inside the directory about to be deleted.
   const retained = worker.evidence == null
-    ? Promise.resolve()
+    ? (worker.workspace == null ? Promise.resolve() : Promise.reject(new Error("Worker has no evidence plan; preserving its workspace")))
     : retainWorkerEvidence(evidenceFor(worker, worker.evidence, outcome)).then(() => undefined);
   void retained
-    .catch(() => undefined)
     .then(async () => {
       // The workspace goes with the Worker. It is expensive and regenerable, and
       // deleting it costs no conscience precisely because everything a human
@@ -140,7 +140,7 @@ export function cleanupWorkflowWorker(
         live: stillLive,
       }).catch(() => undefined);
     })
-    .catch(() => undefined);
+    .catch((error) => process.stderr.write(`Worker ${worker.workerId} evidence retention failed; workspace preserved: ${redactDiagnosticLine(error instanceof Error ? error.message : String(error)).slice(0,1024)}\n`));
 }
 
 /** What this death asks the evidence lane to keep. PURE. */
@@ -151,6 +151,7 @@ function evidenceFor(
 ): Parameters<typeof retainWorkerEvidence>[0] {
   return {
     root: plan.root,
+    ...(worker.workspace == null ? {} : { workspace: worker.workspace }),
     ...(plan.logPath == null ? {} : { logPath: plan.logPath }),
     verdict: {
       workerId: worker.workerId,
