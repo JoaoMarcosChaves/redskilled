@@ -29,6 +29,7 @@ import {
 import { createChildAcpSpinEpisode, type ChildAcpSpinEpisode } from "./child-spin.js";
 import { createWorkerTerminalHost, type WorkerTerminalHost } from "./terminal-host.js";
 import type { WorkerTerminalDenial } from "./terminal-policy.js";
+import { childStartupDiagnostic } from "./child-startup-diagnostic.js";
 
 export interface ChildAgentSessionOptions {
   readonly endpoint: AcpEndpoint;
@@ -171,9 +172,10 @@ export class WorkflowChildAgent {
     const child = spawn(endpoint.command, endpoint.args, {
       cwd: this.#options.cwd,
       env: _credentialFreeEnvWithHome(process.env),
-      stdio: ["pipe", "pipe", "ignore"],
+      stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
+    const diagnostic = childStartupDiagnostic(child);
     if (child.pid != null) {
       installChildAgentReaper();
       registerChildAgentProcess(child.pid);
@@ -210,6 +212,7 @@ export class WorkflowChildAgent {
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     ));
+    let phase = "initialize";
     try {
       const initialized = await connection.agent.request(methods.agent.initialize, {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -217,6 +220,7 @@ export class WorkflowChildAgent {
         clientInfo: { name: "RedSkills Workflow Worker", version: "1" },
         _meta: { redskills: { wireMajor: REDSKILLS_WIRE_MAJOR } },
       });
+      phase = "session/new";
       const session = await connection.agent.request(methods.agent.session.new, {
         cwd: this.#options.cwd,
         mcpServers: [...this.#options.mcpServers],
@@ -233,6 +237,7 @@ export class WorkflowChildAgent {
       // the mode is refused the child cannot work, and failing here is a birth
       // that explains itself rather than a turn that dies on its first write.
       if (endpoint.unattendedSessionMode != null) {
+        phase = "session/set_mode";
         await connection.agent.request(methods.agent.session.setMode, {
           sessionId: session.sessionId,
           modeId: endpoint.unattendedSessionMode,
@@ -250,8 +255,9 @@ export class WorkflowChildAgent {
       return active;
     } catch (error) {
       connection.close();
+      const failure = await diagnostic.failure(phase, error);
       this.#reap(child);
-      throw error;
+      throw failure;
     }
   }
 

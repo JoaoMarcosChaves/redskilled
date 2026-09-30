@@ -1,7 +1,9 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../dist/client/", import.meta.url);
+const rootPath = fileURLToPath(root);
 const destination = new URL("../../redskilled/src/web-assets.generated.ts", import.meta.url);
 const mime = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 const files = [];
@@ -12,9 +14,9 @@ function walk(directory) {
     else files.push(path);
   }
 }
-walk(root.pathname);
+walk(rootPath);
 const records = files.sort().map((path) => {
-  const name = `/${relative(root.pathname, path).replaceAll("\\\\", "/")}`;
+  const name = `/${relative(rootPath, path).replaceAll("\\\\", "/")}`;
   const type = mime[extname(path)] ?? "application/octet-stream";
   return `  ${JSON.stringify(name)}: { type: ${JSON.stringify(type)}, base64: ${JSON.stringify(readFileSync(path).toString("base64"))} },`;
 });
