@@ -42,6 +42,7 @@ export interface RedskilledGithubCustodyUpstreamInput {
   readonly project: RedskilledGithubProjectAuthority;
   readonly credential: RedskilledGithubCredential;
   readonly pullRequest: number;
+  readonly armedHead?: string;
 }
 
 export interface RedskilledGithubCustodyUpstream {
@@ -76,6 +77,7 @@ export interface RedskilledGithubCustodyRecord extends RedskilledGithubCustodyHa
     | "report-moved-head"
     | "none";
   readonly terminal_outcome: "merged" | "closed" | null;
+  readonly last_error?: string;
   readonly fault?: RedskilledGithubCustodyFault;
 }
 
@@ -116,6 +118,7 @@ export interface CreateGithubCustodianOptions {
   readonly clock: () => string;
   readonly tickMs: number;
   readonly inertMs: number;
+  readonly onMerged?: (project: RedskilledGithubProjectAuthority, credential: RedskilledGithubCredential, ticket: number) => Promise<void>;
 }
 
 /**
@@ -144,6 +147,15 @@ export function compactGithubCustodySnapshot(value: GithubCustodySnapshot): Gith
   };
 }
 
+/** Read the authoritative handoffs before admitting more work; corruption fails closed. */
+export async function readGithubCustodyRecords(path: string): Promise<readonly RedskilledGithubCustodyRecord[]> {
+  try { return parseSnapshot(decode(await readFile(path, "utf8"))).records; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 export function createGithubCustodian(options: CreateGithubCustodianOptions): GithubCustodian {
   let snapshot: GithubCustodySnapshot | undefined;
   let tail: Promise<unknown> = Promise.resolve();
@@ -151,6 +163,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
   const executions = new Map<string, ProjectExecution>();
   const timers = new Map<string, NodeJS.Timeout>();
   const driving = new Set<string>();
+  const failures = new Map<string, number>();
 
   const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
     const next = tail.then(operation, operation);
@@ -221,6 +234,7 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
         project: execution.project,
         credential: execution.credential,
         pullRequest: ticking.pull_request,
+        armedHead: ticking.armed_head,
       };
       let view = validateForgeView(await options.upstream.observe(input));
       const open = view.forge_state !== "merged" && view.forge_state !== "closed";
@@ -233,24 +247,30 @@ export function createGithubCustodian(options: CreateGithubCustodianOptions): Gi
       if (open && !movedHead && !view.native_intent) {
         view = validateForgeView(await options.upstream.arm(input));
       }
+      if (view.forge_state === "merged") await options.onMerged?.(execution.project, execution.credential, ticking.owner_ticket);
+      failures.delete(key);
       const terminal = view.forge_state === "merged" || view.forge_state === "closed";
       await updateRecord(key, (record) => ({
         ...record,
         state: terminal ? "terminal" : "active",
         last_forge_state: view.forge_state,
         next_action: terminal ? "none" : movedHead ? "report-moved-head" : "await-forge",
+        last_error: undefined,
         terminal_outcome: view.forge_state === "merged"
           ? "merged"
           : view.forge_state === "closed" ? "closed" : null,
       }));
       if (!terminal) schedule(key);
-    } catch {
+    } catch (error) {
+      const failureCount = (failures.get(key) ?? 0) + 1;
+      failures.set(key, failureCount);
       await updateRecord(key, (record) => record.state === "terminal" ? record : {
         ...record,
         last_forge_state: "unavailable",
+        last_error: error instanceof Error ? error.message : String(error),
         next_action: "retry-forge",
       }).catch(() => undefined);
-      schedule(key);
+      schedule(key, Math.min(options.tickMs * 2 ** Math.min(failureCount - 1, 10), 900_000));
     } finally {
       driving.delete(key);
     }
@@ -475,6 +495,7 @@ function parseRecord(value: unknown): RedskilledGithubCustodyRecord {
     last_forge_state: forge,
     next_action: nextAction(record.next_action),
     terminal_outcome: terminal,
+    ...(typeof record.last_error === "string" ? { last_error: record.last_error } : {}),
   };
 }
 

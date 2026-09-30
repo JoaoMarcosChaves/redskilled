@@ -22,6 +22,7 @@ import type {
   RedskilledGithubCredential,
   RedskilledGithubGatewayRegistration,
   RedskilledGithubProjectReader,
+  RedskilledGithubManagedProjectReader,
 } from "./github-gateway.js";
 import type { RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -103,6 +104,13 @@ export function createMobileTicketDispatcher(options: CreateMobileTicketDispatch
       path: `repos/${repository.fullName}/issues/${reference.ticket}`,
     }).then((answer) => answer.value), reference.ticket);
 
+    const managed = reader as Partial<RedskilledGithubManagedProjectReader>;
+    if (managed.mergeCustodyStatus != null) {
+      const custody = await managed.mergeCustodyStatus();
+      const landing = custody.records.find((record) => record.owner_ticket === reference.ticket &&
+        (record.state === "active" || record.terminal_outcome === "merged"));
+      if (landing != null) throw new Error(`Ticket #${reference.ticket} already has pull request #${landing.pull_request} in merge custody`);
+    }
     const workerId = mintHostWorkerId(options.hostState().workers.map((worker) => worker.worker_id));
     const claim = claimAdapter(reader, repository.fullName, workerId);
     const decision = await acquireClaim(claim, { worker: workerId }, reference.ticket);

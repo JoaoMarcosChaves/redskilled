@@ -24,6 +24,8 @@ export type RedskilledGithubWrite =
        * advance; the optional comment explains it in the same write.
        */
       readonly kind: "issue-transition";
+      /** Confirmed merge completion may explicitly close its owning Ticket. */
+      readonly close?: true;
       readonly issue: number;
       readonly add: readonly string[];
       readonly remove: readonly string[];

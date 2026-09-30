@@ -18,11 +18,12 @@
 //  3. What sustains the registration and what lets the daemon idle out both
 //     follow from the poll OUTCOME, and the outcome is readable from the one
 //     surface an operator reads.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { encode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { registerRedskilledProject } from "../src/client.js";
@@ -230,4 +231,26 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
 
     expect(daemon.hostState().registrations ?? []).toHaveLength(0);
   });
+});
+
+// Regression: a cleanly exited Worker does not put its pending landing back in the pool.
+describe("pending merge custody survives an absent Worker", () => {
+  it("does not birth another Worker for a ready Ticket already handed off", async () => {
+    const tracker = await trackerStandingIn(1);
+    const paths = await sessionPaths();
+    const workspace = await scratch("redskilled-workspace-");
+    const custodyPath = join(dirname(paths.eventLanePath), "state", "github", "custody.toon");
+    await mkdir(dirname(custodyPath), {recursive:true});
+    await writeFile(custodyPath, encode({version:1, records:[{
+      pull_request:301, owner_ticket:1, branch:"red/first/1", base:"main", armed_head:"a".repeat(40), project_id:"github:1", project_label:"acme/widgets", workspace_path:workspace, credential_profile:"personal", handed_off_at:new Date().toISOString(), state:"active", last_tick_at:null, last_forge_state:"unavailable", next_action:"retry-forge", terminal_outcome:null,
+    }]}));
+    const daemon = await startRedskilledDaemon({ paths, ceiling:UNBOUNDED_HOST_CEILING, sampleMs:0, demandMs:30,
+      queueDiscovery:{...resolveServeQueueDiscovery({"queue-endpoint":tracker.url},{[REDSKILLED_HOST_TOKEN_ENV]:"t"}),intervalMs:30},
+    });
+    running.push(daemon);
+    await registerRedskilledProject(paths, registration("acme/widgets",workspace),{readyTimeoutMs:5000});
+    await expect.poll(() => daemon.demand()?.projects[0]?.queue_depth,{timeout:5000}).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve,100));
+    expect(await readFile(join(workspace,"proof.txt"),"utf8").catch(() => "")).toBe("");
+  }, 15_000);
 });

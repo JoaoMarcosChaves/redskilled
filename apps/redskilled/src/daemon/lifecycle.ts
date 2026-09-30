@@ -1,3 +1,4 @@
+import { carryQueueItemsOutsideCustody } from "../queue-custody-admission.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { Server, Socket } from "node:net";
@@ -144,7 +145,6 @@ import { pollRegistrationActivity } from "./registration-activity.js";
 import { REDSKILLED_ACTIVITY_STALENESS_FACTOR } from "../activity-report.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
-  carryQueueItems,
   fetchQueueDiscovery,
   nextQueuePollMs,
   unconfiguredQueueDiscovery,
@@ -929,14 +929,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       lastQueue = unconfiguredQueueDiscovery(projects, now, queueUnconfiguredReason);
       return lastQueue;
     }
-    lastQueue = carryQueueItems(
+    lastQueue = await carryQueueItemsOutsideCustody(
       await remotePoll("queue poll", () => fetchQueueDiscovery({
         projects,
         transport: queueTransport!,
         now,
         ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
       })),
-      lastQueue,
+      lastQueue, paths.eventLanePath,
     );
     // The depth this poll just counted is the renewal a project with open work
     // gets (Amendment 7), applied here rather than at the next read so a deadline

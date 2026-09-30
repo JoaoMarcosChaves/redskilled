@@ -480,7 +480,7 @@ export function reseedHandoff(
 /** The pull request body: what landed, and how many rounds it took. */
 function landingBody(ticket: TicketLoopTicket, rounds: number): string {
   return [
-    `Refs #${ticket.number}`,
+    `Closes #${ticket.number}`,
     "",
     `Gate green after ${rounds} implementing ${rounds === 1 ? "round" : "rounds"}.`,
   ].join("\n");

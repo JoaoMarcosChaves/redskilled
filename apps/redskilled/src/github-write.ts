@@ -106,6 +106,10 @@ async function applyIssueTransition(
   },
 ): Promise<unknown> {
   const issuePath = `${ctx.origin}/repos/${ctx.repository}/issues/${write.issue}`;
+  if (write.close === true) {
+    const closed = await ctx.fetchImpl(issuePath, {method:"PATCH", headers:ctx.headers, body:JSON.stringify({state:"closed",state_reason:"completed"})});
+    if (!closed.ok) throw githubUpstreamRefusal("issue transition close", "rest", closed, ctx.clock(), ctx.credentialProfile);
+  }
   if (write.add.length > 0) {
     const added = await ctx.fetchImpl(`${issuePath}/labels`, {
       method: "POST",

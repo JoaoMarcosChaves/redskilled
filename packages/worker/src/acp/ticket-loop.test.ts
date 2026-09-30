@@ -124,7 +124,7 @@ describe("the Ticket loop's declared arc", () => {
     expect(requests[1]!.method).toBe(REDSKILLS_ACP_METHODS.land);
     expect(land.owner_ticket).toBe(4020);
     expect(land.base).toBe("main");
-    expect(land.body).toContain("Refs #4020");
+    expect(land.body).toContain("Closes #4020");
     // #4130: the land names the exact commit its publish validated.
     expect(land.commit).toBe(result.publication.commit);
   });

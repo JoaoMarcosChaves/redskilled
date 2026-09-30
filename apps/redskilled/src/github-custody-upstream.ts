@@ -44,6 +44,37 @@ export function createRedskilledGithubCustodyUpstream(
       if (body.merged === true || body.merged_at != null) {
         return { forge_state: "merged", native_intent: false, ...headShaOf(body) };
       }
+      const view = pullRequestView(body);
+      if (body.draft === true) throw new Error("GitHub custody refuses to merge a draft pull request");
+      if (input.armedHead != null && view.head_sha !== input.armedHead) {
+        throw new Error("GitHub custody refused a head different from the validated head");
+      }
+      // A clean PR needs no auto-merge capability. GitHub's normal merge endpoint
+      // enforces protections; the SHA precondition closes the observation/write race.
+      if (view.forge_state === "open-clean" && input.armedHead != null) {
+        const decisions = new Map<string, string>();
+        for (let page = 1; ; page += 1) {
+          const reviews = await fetchImpl(`${origin}/repos/${repository}/pulls/${input.pullRequest}/reviews?per_page=100&page=${page}`, {method:"GET",headers:githubHeaders(input.credential.secret)});
+          if (!reviews.ok) throw new Error(`GitHub custody review lookup failed with HTTP ${reviews.status}`);
+          const rows = await reviews.json() as { user?: { login?: string }; state?: string }[];
+          if (!Array.isArray(rows)) throw new Error("GitHub custody received no review list");
+          for (const review of rows) {
+            if (review.user?.login != null && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state ?? "")) decisions.set(review.user.login, review.state!);
+          }
+          if (rows.length < 100) break;
+        }
+        if ([...decisions.values()].includes("CHANGES_REQUESTED")) throw new Error("GitHub custody refuses unresolved requested changes");
+        const merged = await fetchImpl(`${origin}/repos/${repository}/pulls/${input.pullRequest}/merge`, {
+          method: "PUT",
+          headers: { ...githubHeaders(input.credential.secret), "content-type": "application/json" },
+          body: JSON.stringify({ merge_method: "merge", sha: input.armedHead }),
+        });
+        const receipt = await merged.json() as { merged?: unknown };
+        if (!merged.ok || receipt.merged !== true) {
+          throw new Error(`GitHub normal merge refused with HTTP ${merged.status}`);
+        }
+        return { forge_state: "merged", native_intent: false, head_sha: input.armedHead };
+      }
       const nodeId = typeof body.node_id === "string" ? body.node_id : "";
       if (nodeId === "") throw new Error("GitHub custody cannot arm a pull request without a node identity");
       const response = await fetchImpl(graphqlEndpoint, {
@@ -81,7 +112,7 @@ function pullRequestView(value: unknown): RedskilledGithubCustodyForgeView {
   const mergeableState = typeof pull.mergeable_state === "string" ? pull.mergeable_state.toLowerCase() : "unknown";
   const forgeState = pull.mergeable === false || ["blocked", "dirty", "behind"].includes(mergeableState)
     ? "open-blocked" as const
-    : pull.mergeable === true && ["clean", "has_hooks", "unstable"].includes(mergeableState)
+    : pull.mergeable === true && ["clean", "has_hooks"].includes(mergeableState)
       ? "open-clean" as const
       : "open-pending" as const;
   return { forge_state: forgeState, native_intent: nativeIntent, ...headSha };

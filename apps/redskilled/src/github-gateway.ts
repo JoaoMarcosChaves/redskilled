@@ -1,3 +1,4 @@
+import { cascadeMergedTicket } from "./github-dependency-cascade.js";
 /**
  * Project-scoped GitHub reads, coalescing, and authority enforcement owned by
  * redskilled. Callers receive readers bound to one Project and credential.
@@ -224,6 +225,7 @@ export interface CreateRedskilledGithubGatewayOptions {
   readonly custodyUpstream?: RedskilledGithubCustodyUpstream;
   readonly custodyTickMs?: number;
   readonly custodyInertMs?: number;
+  readonly custodyCascade?: boolean;
   readonly clock?: () => string;
   readonly freshMs?: number;
   readonly capacity?: number;
@@ -422,9 +424,12 @@ export function createRedskilledGithubGateway(
         clock,
         tickMs: Math.max(1, options.custodyTickMs ?? refreshMs),
         inertMs: Math.max(1, options.custodyInertMs ?? Math.max(refreshMs * 3, 60_000)),
+        ...(options.custodyCascade !== true ? {} : { onMerged: async (project, credential, ticket) => {
+          await cascadeMergedTicket(gateway.forProject(project, credential), project, ticket);
+        } }),
       });
 
-  return {
+  const gateway: RedskilledGithubManagedBudgetGateway = {
     forProject(authority, credential) {
       const project = validateAuthority(authority);
       if (typeof credential.secret !== "string" || credential.secret.trim() === "") {
@@ -561,6 +566,7 @@ export function createRedskilledGithubGateway(
       custodian?.close();
     },
   };
+  return gateway;
 }
 
 

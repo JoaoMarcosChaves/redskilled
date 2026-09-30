@@ -66,6 +66,7 @@ export function resolveServeGithubGateway(
       outboxPath: join(redskilledHomeDir(homeDir), "state", "github", "outbox.toon"),
       custodyPath: join(redskilledHomeDir(homeDir), "state", "github", "custody.toon"),
       custodyTickMs: 30_000,
+      custodyCascade: true,
       custodyInertMs: 120_000,
       custodyUpstream: createRedskilledGithubCustodyUpstream({
         ...(env.GITHUB_API_URL ? { origin: env.GITHUB_API_URL } : {}),

@@ -211,6 +211,22 @@ describe("`_redskills/land` — the daemon opens the PR and hands the merge on",
     expect(armed).toBe(0);
   }, 30_000);
 
+  it("refuses a second Worker's PR while the first landing still owns the Ticket", async () => {
+    const host = await hostFixture("afk/4019-second");
+    let writes = 0;
+    const gateway = registration(host.root, {
+      custodyPath: join(host.root, "github-custody.toon"), custodyTickMs: 3_600_000,
+      writeUpstream: async () => { writes += 1; return { number: 74 }; },
+      custodyUpstream: { observe: async () => ({ forge_state: "open-pending", native_intent: true }), arm: async () => ({ forge_state: "open-pending", native_intent: true }) },
+    });
+    const selection = (await gateway.credentialForProject!(host.project))!;
+    const reader = gateway.gateway.forProject({ ...host.project, credentialProfile: selection.profile }, selection.credential) as import("../src/github-gateway.js").RedskilledGithubManagedProjectReader;
+    await reader.handoffMergeCustody({ pull_request:73, owner_ticket:4019, branch:"afk/4019-first", base:"main", armed_head:host.commit });
+    const land = bindAcpWorkerLand({ gateway, held: () => host.worker });
+    await expect(land({params:landParams({idempotency_key:"other-worker",branch:"afk/4019-second",commit:host.commit,base:"main",title:"duplicate",body:"Refs #4019",owner_ticket:4019})})).rejects.toThrow(/already has pull request #73/);
+    expect(writes).toBe(0);
+  });
+
   it("refuses a land request from a Worker this daemon does not hold", async () => {
     const host = await hostFixture("afk/4019-unheld-landing");
     const land = bindAcpWorkerLand({ gateway: registration(host.root), held: () => undefined });

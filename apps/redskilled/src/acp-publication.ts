@@ -50,6 +50,16 @@ import type { AcpProjectWorkspace } from "./project-workspace.js";
 
 /** How long a local object delivery may take before publication gives up. */
 const DELIVERY_TIMEOUT_MS = 120_000;
+const landingLocks = new Map<string, Promise<void>>();
+async function serializeTicketLanding<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = landingLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  landingLocks.set(key, current);
+  await previous;
+  try { return await operation(); }
+  finally { release(); if (landingLocks.get(key) === current) landingLocks.delete(key); }
+}
 
 /** A full object name, which is what `git rev-parse HEAD` in a Worktree gives. */
 const OBJECT_NAME = /^[0-9a-f]{40}$/;
@@ -137,17 +147,23 @@ export function bindAcpWorkerLand(deps: AcpPublicationDeps) {
     { params }: { readonly params: RedskilledLandRequest },
   ): Promise<RedskilledLandAnswer> => {
     const worker = requireHeldWorker(deps.held());
+    return await serializeTicketLanding(`${worker.project.projectId}:${params.owner_ticket}`, async () => {
     const reader = await projectReader(deps.gateway, worker.project);
-    const opened = await reader.write({
+    const existing = (await custodian(reader).mergeCustodyStatus()).records.find((record) =>
+      record.owner_ticket === params.owner_ticket && (record.state === "active" || record.terminal_outcome === "merged"));
+    if (existing != null && (existing.branch !== params.branch || existing.base !== params.base || existing.state === "terminal")) {
+      throw new Error(`Ticket #${params.owner_ticket} already has pull request #${existing.pull_request} in merge custody; resume that landing instead of creating a duplicate`);
+    }
+    const opened = existing == null ? await reader.write({
       idempotency_key: params.idempotency_key,
       write: {
         kind: "pull-request",
         head: params.branch,
         base: params.base,
         title: params.title,
-        body: params.body,
+        body: params.body.includes(`Closes #${params.owner_ticket}`) ? params.body : `${params.body}\n\nCloses #${params.owner_ticket}`,
       },
-    });
+    }) : { value: { number: existing.pull_request } };
     const pullRequest = pullRequestNumber(opened.value);
     // The handoff RECORDS the obligation and returns. Whether the pull request
     // ends merged is the Queue Custodian's question, asked on its own tick.
@@ -167,6 +183,7 @@ export function bindAcpWorkerLand(deps: AcpPublicationDeps) {
       custody_state: custody.state,
       handed_off_at: custody.handed_off_at,
     };
+    });
   };
 }
 

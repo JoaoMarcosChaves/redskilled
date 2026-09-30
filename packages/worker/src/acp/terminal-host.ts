@@ -26,6 +26,8 @@ import {
   type WaitForTerminalExitRequest,
   type WaitForTerminalExitResponse,
 } from "@agentclientprotocol/sdk";
+import { signalTree } from "@reddb-io/shared/kill-tree.js";
+import { installChildAgentReaper, registerChildAgentProcess, forgetChildAgentProcess } from "./child-reaper.js";
 import { isCredentialEnvironmentName } from "@reddb-io/shared/credential-free-env.js";
 import {
   evaluateWorkerTerminalRequest,
@@ -95,7 +97,12 @@ export function createWorkerTerminalHost(options: WorkerTerminalHostOptions): Wo
         cwd: params.cwd ?? options.cwd,
         env: { ...options.env, ...declaredEnv(params) },
         stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
+      if (child.pid != null && process.platform !== "win32") {
+        installChildAgentReaper();
+        registerChildAgentProcess(child.pid);
+      }
       const terminal: HeldTerminal = {
         child,
         limit: params.outputByteLimit ?? DEFAULT_TERMINAL_OUTPUT_BYTE_LIMIT,
@@ -109,6 +116,7 @@ export function createWorkerTerminalHost(options: WorkerTerminalHostOptions): Wo
             resolve();
           });
           child.once("close", (code, signal) => {
+            if (child.pid != null) forgetChildAgentProcess(child.pid);
             terminal.exit = { exitCode: code, signal: signal ?? null };
             resolve();
           });
@@ -137,20 +145,20 @@ export function createWorkerTerminalHost(options: WorkerTerminalHostOptions): Wo
     },
 
     kill(params) {
-      held(params.terminalId).child.kill();
+      stopTerminal(held(params.terminalId).child, "SIGTERM");
       return {};
     },
 
     release(params) {
       const terminal = held(params.terminalId);
       terminals.delete(params.terminalId);
-      if (terminal.exit == null) terminal.child.kill();
+      if (terminal.exit == null) stopTerminal(terminal.child, "SIGKILL");
       return {};
     },
 
     closeAll() {
       for (const terminal of terminals.values()) {
-        if (terminal.exit == null) terminal.child.kill();
+        if (terminal.exit == null) stopTerminal(terminal.child, "SIGKILL");
       }
       terminals.clear();
     },
@@ -192,4 +200,9 @@ function declaredEnv(params: CreateTerminalRequest): Record<string, string> {
     declared[variable.name] = variable.value;
   }
   return declared;
+}
+
+function stopTerminal(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid == null || process.platform === "win32") child.kill(signal);
+  else signalTree(child.pid, signal);
 }

@@ -276,19 +276,20 @@ function validateWrite(write: RedskilledGithubWrite): RedskilledGithubWrite {
     return { kind: "pull-request", head, base, title, body };
   }
   if (write.kind === "issue-transition") {
-    requireOnlyKeys(write, ["kind", "issue", "add", "remove", "comment"]);
+    requireOnlyKeys(write, ["kind", "issue", "add", "remove", "comment", "close"]);
     if (!Number.isSafeInteger(write.issue) || write.issue <= 0) {
       return refuse("an Issue transition needs one positive Issue number");
     }
     const add = validateLabelList(write.add, "an Issue transition add list");
     const remove = validateLabelList(write.remove, "an Issue transition remove list");
-    if (add.length === 0 && remove.length === 0) {
+    if (write.close != null && write.close !== true) return refuse("an Issue transition may only close a Ticket");
+    if (add.length === 0 && remove.length === 0 && write.close !== true) {
       return refuse("an Issue transition needs at least one label to add or remove");
     }
     const comment = write.comment == null
       ? undefined
       : nonEmpty(write.comment, "an Issue transition comment must not be empty");
-    return { kind: "issue-transition", issue: write.issue, add, remove, ...(comment == null ? {} : { comment }) };
+    return { kind: "issue-transition", issue: write.issue, add, remove, ...(write.close === true ? { close: true } : {}), ...(comment == null ? {} : { comment }) };
   }
   if (write.kind === "issue-publication") {
     requireOnlyKeys(write, ["kind", "issue", "title", "body", "labels"]);
