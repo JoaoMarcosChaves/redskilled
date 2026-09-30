@@ -91,14 +91,17 @@ export const ACP_UNATTENDED_POSTURES: Readonly<Record<AcpAgentId, AcpUnattendedP
       + "modes, and setting it takes a probed write from two refused permission requests to `end_turn` with "
       + "the file written.",
   },
-  // #4230, observed live on 4.1.15 before this module existed.
+  // Preserve the adapter already running on the host. The maintained adapter
+  // does not parse the archived adapter's -c launch flags; the session mode is
+  // established before any prompt. Probed without a model call on 2026-09-30.
   codex: {
-    kind: "launch-args",
-    args: ["-c", "approval_policy=never", "-c", "sandbox_mode=danger-full-access"],
+    kind: "session-mode",
+    modeId: "agent-full-access",
     evidence:
-      "codex-acp@0.16.0 forwards `-c key=value` into codex's own config. Left on its defaults it aborted the "
-      + "turn on the first apply_patch ('aborted by user after 0.1s', turn_aborted reason interrupted, "
-      + "stopReason cancelled).",
+      "@agentclientprotocol/codex-acp@1.13.1 advertises agent-full-access in session/new. "
+      + "A live initialize, session/new and session/set_mode probe passed with the daemon-owned "
+      + "credential home and disposable HOME, without prompting the model. Its packaged entry "
+      + "uses session modes and does not parse the older adapter's -c flags.",
   },
   // Probed 2026-08-21: `pi-acp --help` prints nothing, and `dist/index.js`
   // tests process.argv for exactly one token, `--terminal-login`. Its only

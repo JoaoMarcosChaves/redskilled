@@ -79,12 +79,9 @@ describe("the registered runner reaches the born Worker", () => {
     expect(endpoint.agent).toBe("codex");
     expect(endpoint.command).toBe("npx");
     expect(endpoint.args).toEqual([
-      "-y", "-p", "@zed-industries/codex-acp@0.16.0", "codex-acp",
-      // Unattended posture: nobody answers a permission dialog, so an adapter
-      // left on its ask-for-approval defaults aborts its turn on the first
-      // write ("aborted by user", observed live on 4.1.15).
-      "-c", "approval_policy=never", "-c", "sandbox_mode=danger-full-access",
+      "-y", "-p", "@agentclientprotocol/codex-acp@1.13.1", "codex-acp",
     ]);
+    expect(endpoint.unattendedSessionMode).toBe("agent-full-access");
   });
 
   it("still admits the governed native default exactly as before", () => {
@@ -101,17 +98,12 @@ describe("the registered runner reaches the born Worker", () => {
     expect(codexArgs.filter((arg) => arg.startsWith("--child-arg"))).toEqual([
       "--child-arg=-y",
       "--child-arg=-p",
-      "--child-arg=@zed-industries/codex-acp@0.16.0",
+      "--child-arg=@agentclientprotocol/codex-acp@1.13.1",
       "--child-arg=codex-acp",
-      "--child-arg=-c",
-      "--child-arg=approval_policy=never",
-      "--child-arg=-c",
-      "--child-arg=sandbox_mode=danger-full-access",
     ]);
+    expect(codexArgs[codexArgs.indexOf("--child-session-mode") + 1]).toBe("agent-full-access");
     expect(codexSpec.env?.OPENCODE_DB).toBeUndefined();
     expect(codexSpec.env?.CODEX_HOME).toBe(codexAgentHome());
-    // codex takes its posture from argv, so no session mode rides along.
-    expect(codexArgs).not.toContain("--child-session-mode");
 
     const redcodeSpec = nativeWorkerSpec(project, workspace, "/tmp/sock/x.sock", "/tmp/runtime", "afk");
     const redcodeArgs = redcodeSpec.args ?? [];

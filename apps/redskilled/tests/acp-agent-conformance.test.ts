@@ -47,7 +47,7 @@ interface AgentCase {
 const AGENT_MATRIX: readonly AgentCase[] = [
   { id: "redcode", label: "Redcode", kind: "native", command: ["redcode", "acp"], posture: "none-needed" },
   { id: "claude-code", label: "Claude Code", kind: "adapter", posture: "session-mode" },
-  { id: "codex", label: "Codex", kind: "adapter", posture: "launch-args" },
+  { id: "codex", label: "Codex", kind: "adapter", posture: "session-mode" },
   { id: "pi", label: "Pi", kind: "adapter", posture: "none-needed" },
   { id: "opencode", label: "OpenCode", kind: "native", command: ["opencode", "acp"], posture: "none-needed" },
 ] as const;

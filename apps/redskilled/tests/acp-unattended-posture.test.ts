@@ -24,15 +24,10 @@ describe("the declared unattended posture", () => {
     }
   });
 
-  it("reads a launch-args posture as arguments and nothing else", () => {
+  it("establishes Codex full access as a session mode, without ignored launch flags", () => {
     const posture = unattendedPostureFor("codex");
-    expect(unattendedLaunchArgs(posture)).toEqual([
-      "-c",
-      "approval_policy=never",
-      "-c",
-      "sandbox_mode=danger-full-access",
-    ]);
-    expect(unattendedSessionMode(posture)).toBeUndefined();
+    expect(unattendedLaunchArgs(posture)).toEqual([]);
+    expect(unattendedSessionMode(posture)).toBe("agent-full-access");
   });
 
   it("reads a session-mode posture as a mode and nothing else", () => {
